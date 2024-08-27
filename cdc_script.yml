@@ -1,0 +1,41 @@
+id: cdc_test
+namespace: company.team
+variables:
+  scylla_host: '192.168.10.129'
+  scylla_port: 9042
+  scylla_user: 'cassandra'
+  scylla_password: 'cassandra'
+  scylla_keyspace: "test"
+tasks:
+  - id: capture
+    type: io.kestra.plugin.debezium.sqlserver.Capture
+    hostname: 192.168.21.1
+    port: '1433'
+    username: sa
+    password: Admin@123
+    database: test
+    ignoreDdl: true
+    excludedTables: "dbo.ratings" 
+    metadata: ADD_FIELD
+    deleted: DROP
+    deletedFieldName: deleted
+
+  - id: iterate
+    type: io.kestra.core.tasks.flows.EachSequential
+    value: "{{ outputs.capture.uris | jq('.[]') }}"
+    allowFailure: true
+    tasks:
+      - id: csv_transform
+        type: io.kestra.plugin.serdes.csv.CsvWriter
+        from: "{{ taskrun.value }}"
+      
+      - id: py_load
+        type: io.kestra.plugin.scripts.python.Commands
+        runner: PROCESS
+        allowFailure: true
+        namespaceFiles:
+          enabled: true
+        inputFiles:
+          data.csv: "{{ outputs.csv_transform[taskrun.value].uri }}"
+        commands:
+          - python3 scripts/cdc_test.py

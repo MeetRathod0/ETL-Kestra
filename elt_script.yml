@@ -1,0 +1,51 @@
+id: elt_test
+namespace: company.team
+variables:
+  server_url: jdbc:sqlserver://192.168.21.1:1433;databaseName=test;encrypt=false;
+  username: "sa"
+  password: "Admin@123"
+  schemas: "'dbo'" # 'dbo','person'
+  scylla_host: '192.168.10.128'
+  scylla_port: 9042
+  scylla_user: 'cassandra'
+  scylla_password: 'cassandra'
+  keyspace: "test" 
+tasks:
+  - id: fetch_tables
+    type: io.kestra.plugin.jdbc.sqlserver.Query
+    url: "{{ vars.server_url }}"
+    username: sa
+    password: Admin@123
+    sql: "SELECT CONCAT(T.TABLE_SCHEMA,'.',T.TABLE_NAME) tbl FROM INFORMATION_SCHEMA.TABLES T WHERE T.TABLE_SCHEMA IN ({{ vars.schemas }})"                        
+    fetch: true
+
+  - id: iterate
+    type: io.kestra.core.tasks.flows.EachSequential
+    value: "{{ outputs.fetch_tables.rows | jq('.[] | .tbl')}}"
+    allowFailure: true
+    tasks:
+        # FETCH TABLE
+      - id: fetch_table
+        type: io.kestra.plugin.jdbc.sqlserver.Query
+        url: "{{ vars.server_url }}"
+        username: "{{ vars.username }}"
+        password: "{{ vars.password }}"
+        sql: "SELECT TOP 1000 * FROM {{ taskrun.value }}"
+        fetch: true
+        store: true
+      
+      - id: transform
+        type: io.kestra.plugin.serdes.csv.CsvWriter
+        from: "{{ outputs.fetch_table[taskrun.value].uri }}"
+      
+      - id: py_insert
+        type: io.kestra.plugin.scripts.python.Commands
+        runner: PROCESS
+        allowFailure: true
+        namespaceFiles:
+          enabled: true
+        inputFiles:
+          data.csv: "{{ outputs.transform[taskrun.value].uri }}"
+        commands:                         
+          - python3 scripts/elt_test.py "{{vars.keyspace}}.{{  taskrun.value | replace({'[A-z0-9]+\.':''},regexp=true)}}"
+
